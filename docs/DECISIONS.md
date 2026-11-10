@@ -1,6 +1,6 @@
 # Calculation decisions
 
-Phase 2 implements date and shelf-life calculations. Discount thresholds and pricing are planned for Phase 3.
+The package implements date and shelf-life calculations and expiry-based pricing. Future discount timelines are reserved for Phase 4.
 
 ## Inputs and validation
 
@@ -28,6 +28,7 @@ Use `Zarbinco\ExpiryPricing\ExpiryPricingCalculator` directly in PHP or in a Lar
 | `expiryDate()` | `manufacturingDate`, `shelfLife`, `unit`, `calendar` | Calculated expiry date as a string |
 | `shelfLifeStartDate()` | `expiryDate`, `shelfLife`, `unit`, `calendar` | Calculated shelf-life start date as a string |
 | `remainingShelfLife()` | `date`, `dateType`, `shelfLife`, `unit`, `calendar`, `asOfDate` | Associative array with the fields below |
+| `price()` | `date`, `dateType`, `shelfLife`, `unit`, `calendar`, `asOfDate`, `originalPrice`, `rules`, `minimumPriceRatioBps`, `roundingStep` | Pricing quote with the shelf-life result |
 
 Set `dateType` to `manufacturing` when supplying a manufacturing date or `expiry` when supplying an expiry date.
 
@@ -45,26 +46,48 @@ Set `dateType` to `manufacturing` when supplying a manufacturing date or `expiry
 | `remainingPercentage` | `float` | `remainingDays / totalDays × 100` without display rounding |
 | `expired` | `bool` | `true` on or after the expiry date |
 
-Format `remainingPercentage` as needed for display. Future threshold comparisons will use the integer day counts to preserve the exact ratio.
+Format `remainingPercentage` as needed for display. Discount thresholds use the integer day counts.
 
-## Phase 3 discount thresholds
+## Discount rules
 
-Define each rule as an inclusive percentage of remaining shelf life and its associated discount. For example, a policy may give a 20% discount at 30% remaining or less and a 40% discount at 10% remaining or less.
+Pass `rules` as an array. Each rule must contain exactly two keys, `remainingThresholdBps` and `discountBps`. Both values are integers in basis points from `0` through `10000`, inclusive. For example, `['remainingThresholdBps' => 3000, 'discountBps' => 2000]` represents a 20% discount at a 30% threshold. The keys of the outer array have no effect.
 
-Convert each percentage threshold to a whole-day cutoff using the total shelf-life days. The default rounding mode is `CEIL`. On a seven-day shelf life, a 10% threshold qualifies at one remaining day while the actual percentage is still `1/7 × 100`. When several rules qualify, including rules whose rounded cutoffs coincide, select the largest discount. The selected discount is zero when no rule qualifies.
+For each rule, the whole-day cutoff is `CEIL(totalDays × remainingThresholdBps / 10000)`. A rule qualifies when `remainingDays` is at or below its cutoff. On a seven-day shelf life, 30% and 10% yield cutoffs of three days and one day. At one remaining day, the reported percentage remains `1/7 × 100`. On a 216-day shelf life, the same rules yield cutoffs of 65 and 22 days.
 
-## Phase 3 pricing and previews
+The highest qualifying `discountBps` wins. If discounts are equal, the lower `remainingThresholdBps` wins. Identical rules produce the same match in any order. An empty rule set or a lack of qualifying rules yields a zero discount and a `null` match. A qualifying rule with a zero discount may still appear as the match.
 
-Use integer minor monetary units for prices and exact arithmetic for discount rates and minimum price ratios. Apply the selected percentage discount, enforce the minimum allowed ratio of the original price, and round to a whole minor unit under a defined monetary rounding policy. The final rounded price must respect the minimum.
+On and after the expiry date, the quote returns the original price, zero discount, a `null` match, and `shelfLife.expired` set to `true`. Pricing validates every rule, including when the item is already expired.
 
-Return the original price, selected discount percentage, final price, and shelf-life evaluation. Include the matched rule and the effect of the price floor and rounding so an administrative preview can explain the result. Return future dates when the selected discount changes under the supplied policy. Rules with coincident cutoffs yield one transition showing the winning discount.
+## Monetary calculation
 
-The proposed `price()` method will accept either a manufacturing or an expiry date along with the shelf-life parameters, reference date, original price in minor units, and pricing policy. The policy will supply threshold and discount pairs, the minimum price ratio, and rounding options.
+Supply `originalPrice` in integer minor units from `0` through `intdiv(PHP_INT_MAX, 10000)`. This cap keeps price and basis-point products within the integer range. The minimum price ratio is an integer from `0` through `10000` basis points. Set `roundingStep` to `1` to keep single minor units, `100` for the nearest hundred, or `1000` for the nearest thousand. All pricing arguments are required. Numeric arguments, including `shelfLife` and rule values, must be PHP integers. Invalid numeric values and malformed rules raise `InvalidArgumentException`.
+
+For a positive selected discount, the calculator applies these operations in order using integer arithmetic.
+
+1. Calculate `originalPrice × (10000 - discountBps) / 10000` and round to the nearest minor unit using `HALF_UP`.
+2. Round the result to the nearest multiple of `roundingStep` using `HALF_UP`. In both rounding stages, exact midpoints round upward.
+3. Raise the rounded price to `CEIL(originalPrice × minimumPriceRatioBps / 10000)` if it falls below that floor. Cap the result at `originalPrice`. Both boundaries take precedence over the step, so the final price can fall between step multiples.
+4. Calculate `effectiveDiscountBps` from the difference between the original and final prices. Round `(originalPrice - finalPrice) × 10000 / originalPrice` to the nearest basis point using `HALF_UP`. An original price of zero yields zero effective discount.
+
+When the selected discount is zero, the calculator returns the original price with both adjustment flags set to `false`.
+
+## Price result
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `originalPrice` | `int` | Input price in minor units |
+| `finalPrice` | `int` | Final price in minor units after rounding and boundaries |
+| `discountBps` | `int` | Selected rule's discount in basis points, or zero |
+| `effectiveDiscountBps` | `int` | Actual price reduction in basis points after adjustments |
+| `matchedRule` | `array` or `null` | Selected rule with `remainingThresholdBps` and `discountBps`, or `null` |
+| `priceFloorApplied` | `bool` | Whether the minimum floor raised the rounded price |
+| `roundingApplied` | `bool` | Whether minor-unit rounding or step rounding changed the amount before enforcing boundaries |
+| `shelfLife` | `array` | Result from `remainingShelfLife()` for the supplied dates |
 
 ## Package boundary
 
 The package performs calculations only. The consuming Laravel application owns products, warehouses, database records, inventory reservations, FEFO allocation, checkout workflows, policy publishing, authentication, and business-specific sellability rules. Expired status is available to the application for its own decisions.
 
-## Decisions for Phase 3
+## Phase 4
 
-Choose the exact representation and public precision for discount and price ratios and percentages, the default monetary rounding mode, and the rounding modes callers can select.
+Future discount timelines will identify dates when the selected discount changes. Coincident thresholds will produce a single transition for the winning rule.

@@ -13,6 +13,7 @@ final class ExpiryPricingCalculator
 {
     private const array FIRST_YEAR = ['gregorian' => 1, 'jalali' => 979];
     private const int MAX_YEAR = 9999;
+    private const int BPS_PER_WHOLE = 10000;
 
     public function expiryDate(string $manufacturingDate, int $shelfLife, string $unit, string $calendar): string
     {
@@ -66,6 +67,128 @@ final class ExpiryPricingCalculator
             'remainingPercentage' => ($remainingDays / $totalDays) * 100.0,
             'expired' => $expired,
         ];
+    }
+
+    /**
+     * @param int $shelfLife
+     * @param int $originalPrice Price in minor units.
+     * @param array<array{remainingThresholdBps: int, discountBps: int}> $rules
+     * @param int $minimumPriceRatioBps
+     * @param int $roundingStep
+     * @return array{originalPrice: int, finalPrice: int, discountBps: int, effectiveDiscountBps: int,
+     *     matchedRule: array{remainingThresholdBps: int, discountBps: int}|null,
+     *     priceFloorApplied: bool, roundingApplied: bool, shelfLife: array{startDate: string, expiryDate: string,
+     *         startDateCalculated: bool, totalDays: int, remainingDays: int, remainingPercentage: float, expired: bool}}
+     */
+    public function price(
+        string $date,
+        string $dateType,
+        mixed $shelfLife,
+        string $unit,
+        string $calendar,
+        string $asOfDate,
+        mixed $originalPrice,
+        mixed $rules,
+        mixed $minimumPriceRatioBps,
+        mixed $roundingStep,
+    ): array {
+        if (!is_int($shelfLife)) {
+            throw new InvalidArgumentException('shelfLife must be a positive integer.');
+        }
+
+        $maximumPrice = intdiv(PHP_INT_MAX, self::BPS_PER_WHOLE);
+        if (!is_int($originalPrice) || $originalPrice < 0 || $originalPrice > $maximumPrice) {
+            throw new InvalidArgumentException("originalPrice must be an integer between 0 and $maximumPrice minor units.");
+        }
+
+        if (!is_array($rules)) {
+            throw new InvalidArgumentException('rules must be an array of discount rules.');
+        }
+
+        $minimumPriceRatioBps = $this->validateBps($minimumPriceRatioBps, 'minimumPriceRatioBps');
+        if (!in_array($roundingStep, [1, 100, 1000], true)) {
+            throw new InvalidArgumentException('roundingStep must be the integer 1, 100, or 1000.');
+        }
+
+        $life = $this->remainingShelfLife($date, $dateType, $shelfLife, $unit, $calendar, $asOfDate);
+        $matchedRule = $this->selectDiscountRule($rules, $life['totalDays'], $life['remainingDays'], $life['expired']);
+        $discountBps = $matchedRule['discountBps'] ?? 0;
+        $finalPrice = $originalPrice;
+        $roundingApplied = false;
+        $priceFloorApplied = false;
+
+        if ($discountBps > 0) {
+            $discountedNumerator = $originalPrice * (self::BPS_PER_WHOLE - $discountBps);
+            $minorPrice = $this->halfUpDivide($discountedNumerator, self::BPS_PER_WHOLE);
+            $stepPrice = $this->halfUpDivide($minorPrice, $roundingStep) * $roundingStep;
+            $floorPrice = $this->ceilBps($originalPrice, $minimumPriceRatioBps);
+
+            $roundingApplied = $discountedNumerator % self::BPS_PER_WHOLE !== 0 || $minorPrice !== $stepPrice;
+            $priceFloorApplied = $stepPrice < $floorPrice;
+            $finalPrice = min($originalPrice, max($stepPrice, $floorPrice));
+        }
+
+        return [
+            'originalPrice' => $originalPrice,
+            'finalPrice' => $finalPrice,
+            'discountBps' => $discountBps,
+            'effectiveDiscountBps' => $originalPrice === 0
+                ? 0
+                : $this->halfUpDivide(($originalPrice - $finalPrice) * self::BPS_PER_WHOLE, $originalPrice),
+            'matchedRule' => $matchedRule,
+            'priceFloorApplied' => $priceFloorApplied,
+            'roundingApplied' => $roundingApplied,
+            'shelfLife' => $life,
+        ];
+    }
+
+    /** @return array{remainingThresholdBps: int, discountBps: int}|null */
+    private function selectDiscountRule(array $rules, int $totalDays, int $remainingDays, bool $expired): ?array
+    {
+        $matched = null;
+        foreach ($rules as $key => $rule) {
+            if (!is_array($rule) || count($rule) !== 2) {
+                throw new InvalidArgumentException("rules[$key] must contain remainingThresholdBps and discountBps.");
+            }
+
+            $thresholdBps = $this->validateBps($rule['remainingThresholdBps'] ?? null, "rules[$key].remainingThresholdBps");
+            $discountBps = $this->validateBps($rule['discountBps'] ?? null, "rules[$key].discountBps");
+            if ($expired || $remainingDays > $this->ceilBps($totalDays, $thresholdBps)) {
+                continue;
+            }
+
+            if ($matched === null || $discountBps > $matched['discountBps']
+                || ($discountBps === $matched['discountBps'] && $thresholdBps < $matched['remainingThresholdBps'])) {
+                $matched = ['remainingThresholdBps' => $thresholdBps, 'discountBps' => $discountBps];
+            }
+        }
+
+        return $matched;
+    }
+
+    private function validateBps(mixed $value, string $parameter): int
+    {
+        if (!is_int($value) || $value < 0 || $value > self::BPS_PER_WHOLE) {
+            throw new InvalidArgumentException("$parameter must be an integer between 0 and 10000 basis points.");
+        }
+
+        return $value;
+    }
+
+    private function ceilBps(int $value, int $bps): int
+    {
+        // Split off whole groups of 10,000 to keep the intermediate products in range.
+        $whole = intdiv($value, self::BPS_PER_WHOLE) * $bps;
+        $remainder = ($value % self::BPS_PER_WHOLE) * $bps;
+
+        return $whole + intdiv($remainder + self::BPS_PER_WHOLE - 1, self::BPS_PER_WHOLE);
+    }
+
+    private function halfUpDivide(int $numerator, int $denominator): int
+    {
+        $remainder = $numerator % $denominator;
+
+        return intdiv($numerator, $denominator) + ($remainder >= $denominator - $remainder ? 1 : 0);
     }
 
     private function parseDate(string $date, string $calendar, string $parameter): DateTimeImmutable
