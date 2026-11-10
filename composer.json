@@ -1,0 +1,22 @@
+{
+    "name": "zarbinco/expiry-pricing",
+    "description": "Shelf-life and expiry-based pricing calculations for Laravel.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.3",
+        "hekmatinasser/verta": "^9.0",
+        "illuminate/support": "^13.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^12.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Zarbinco\\ExpiryPricing\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}
