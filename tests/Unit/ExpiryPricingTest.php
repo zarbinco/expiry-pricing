@@ -164,6 +164,10 @@ final class ExpiryPricingTest extends TestCase
         bool $roundingApplied,
         bool $priceFloorApplied,
     ): void {
+        if ($originalPrice > intdiv(PHP_INT_MAX, 10000)) {
+            self::markTestSkipped('The example price exceeds the integer price limit on this platform.');
+        }
+
         $rule = ['remainingThresholdBps' => 10000, 'discountBps' => $discountBps];
         $quote = (new ExpiryPricingCalculator())->price('2026-01-01', 'manufacturing', 2, 'days', 'gregorian',
             '2026-01-01', $originalPrice, [$rule], $minimumPriceRatioBps, $roundingStep);
@@ -178,6 +182,13 @@ final class ExpiryPricingTest extends TestCase
 
     public static function moneyCases(): iterable
     {
+        yield '25 percent discount with step 1' => [250000, 2500, 0, 1, 187500, 2500, false, false];
+        yield '25 percent discount with step 10' => [250000, 2500, 0, 10, 187500, 2500, false, false];
+        yield '25 percent discount with step 100' => [250000, 2500, 0, 100, 187500, 2500, false, false];
+        yield '25 percent discount with step 1000' => [250000, 2500, 0, 1000, 188000, 2480, true, false];
+        yield '25 percent discount with step 10000' => [250000, 2500, 0, 10000, 190000, 2400, true, false];
+        yield '25 percent discount with step 100000' => [250000, 2500, 0, 100000, 200000, 2000, true, false];
+        yield 'step 3000 rounds a tie up' => [250000, 2500, 0, 3000, 189000, 2440, true, false];
         yield 'fractional minor unit rounds half up' => [101, 5000, 0, 1, 51, 4950, true, false];
         yield 'step 100 rounds down' => [149, 1000, 0, 100, 100, 3289, true, false];
         yield 'step 100 rounds a tie up' => [250, 4000, 0, 100, 200, 2000, true, false];
@@ -187,13 +198,18 @@ final class ExpiryPricingTest extends TestCase
         yield 'price floor raises the discounted price' => [100000, 5000, 6000, 1, 60000, 4000, false, true];
         yield 'exact floor overrides the step' => [1001, 5000, 6000, 100, 601, 3996, true, true];
         yield 'step rounding alone meets the floor' => [250, 4000, 8000, 100, 200, 2000, true, false];
+        yield 'large step leaves price above floor' => [250000, 2500, 7000, 100000, 200000, 2000, true, false];
+        yield 'nonmultiple floor overrides large step' => [250000, 2500, 7701, 10000, 192525, 2299, true, true];
         yield 'original price caps the rounded amount' => [960, 100, 0, 1000, 960, 0, true, false];
+        yield 'original price caps the large-step amount' => [155000, 100, 0, 100000, 155000, 0, true, false];
         yield 'effective rate rounds half up' => [32, 300, 0, 1, 31, 313, true, false];
-        yield 'zero-priced product' => [0, 5000, 0, 1000, 0, 0, false, false];
+        yield 'zero-priced product' => [0, 5000, 0, 100000, 0, 0, false, false];
+        yield 'one minor unit with a large step' => [1, 5000, 0, 100000, 0, 10000, true, false];
         yield 'full discount' => [1000, 10000, 0, 100, 0, 10000, false, false];
-        yield 'matched rule with zero discount' => [1550, 0, 0, 1000, 1550, 0, false, false];
+        yield 'matched rule with zero discount' => [1550, 0, 0, 10000, 1550, 0, false, false];
         $largestPrice = intdiv(PHP_INT_MAX, 10000);
         yield 'largest supported price' => [$largestPrice, 10000, 0, 1000, 0, 10000, false, false];
+        yield 'largest price and rounding step' => [$largestPrice, 1, 0, PHP_INT_MAX, 0, 10000, true, false];
     }
 
     #[DataProvider('invalidPricingInputs')]
@@ -229,8 +245,12 @@ final class ExpiryPricingTest extends TestCase
         yield 'floor above 100 percent' => [['minimumPriceRatioBps' => 10001]];
         yield 'numeric string floor' => [['minimumPriceRatioBps' => '6000']];
         yield 'zero rounding step' => [['roundingStep' => 0]];
-        yield 'unsupported rounding step' => [['roundingStep' => 10]];
+        yield 'negative rounding step' => [['roundingStep' => -10]];
         yield 'float rounding step' => [['roundingStep' => 1.0]];
+        yield 'numeric string rounding step' => [['roundingStep' => '10000']];
+        yield 'null rounding step' => [['roundingStep' => null]];
+        yield 'boolean rounding step' => [['roundingStep' => true]];
+        yield 'array rounding step' => [['roundingStep' => [10000]]];
         yield 'rules collection is not an array' => [['rules' => 1]];
         yield 'rule is not an array' => [['rules' => ['rule']]];
         yield 'missing discount key' => [['rules' => [['remainingThresholdBps' => 3000]]]];

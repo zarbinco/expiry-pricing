@@ -186,6 +186,24 @@ final class DiscountTimelineTest extends TestCase
         yield 'monetary step' => [100, 0, 100];
     }
 
+    #[DataProvider('largeRoundingSteps')]
+    public function testRoundsTransitionPricesToLargeSteps(int $roundingStep, array $expectedPrices): void
+    {
+        $timeline = (new ExpiryPricingCalculator())->discountTimeline(
+            '1405-01-01', 'manufacturing', 7, 'days', 'jalali', '1405-01-01',
+            180000, self::RULES, 0, $roundingStep,
+        );
+
+        self::assertSame([2000, 4000], array_column($timeline['transitions'], 'discountBps'));
+        self::assertSame($expectedPrices, array_column($timeline['transitions'], 'finalPrice'));
+    }
+
+    public static function largeRoundingSteps(): iterable
+    {
+        yield 'step of ten thousand' => [10000, [140000, 110000]];
+        yield 'step of one hundred thousand' => [100000, [100000, 100000]];
+    }
+
     public function testCalculatesAThresholdAcrossTheFullGregorianDateRange(): void
     {
         $timeline = (new ExpiryPricingCalculator())->discountTimeline(

@@ -61,7 +61,7 @@ On and after the expiry date, the quote returns the original price, zero discoun
 
 ## Monetary calculation
 
-Supply `originalPrice` in integer minor units from `0` through `intdiv(PHP_INT_MAX, 10000)`. This cap keeps price and basis-point products within the integer range. The minimum price ratio is an integer from `0` through `10000` basis points. Set `roundingStep` to `1` to keep single minor units, `100` for the nearest hundred, or `1000` for the nearest thousand. All pricing arguments are required. Numeric arguments, including `shelfLife` and rule values, must be PHP integers. Invalid numeric values and malformed rules raise `InvalidArgumentException`.
+Supply `originalPrice` in integer minor units from `0` through `intdiv(PHP_INT_MAX, 10000)`. This cap keeps price and basis-point products within the integer range. The minimum price ratio is an integer from `0` through `10000` basis points. `roundingStep` accepts any positive PHP integer in the same monetary unit as the prices. A step of `1` keeps single minor units. The calling application handles any currency conversion. All pricing arguments are required. Numeric arguments, including `shelfLife` and rule values, must be PHP integers. Invalid numeric values and malformed rules raise `InvalidArgumentException`.
 
 For a positive selected discount, the calculator applies these operations in order using integer arithmetic.
 
@@ -69,6 +69,8 @@ For a positive selected discount, the calculator applies these operations in ord
 2. Round the result to the nearest multiple of `roundingStep` using `HALF_UP`. In both rounding stages, exact midpoints round upward.
 3. Raise the rounded price to `CEIL(originalPrice × minimumPriceRatioBps / 10000)` if it falls below that floor. Cap the result at `originalPrice`. Both boundaries take precedence over the step, so the final price can fall between step multiples.
 4. Calculate `effectiveDiscountBps` from the difference between the original and final prices. Round `(originalPrice - finalPrice) × 10000 / originalPrice` to the nearest basis point using `HALF_UP`. An original price of zero yields zero effective discount.
+
+A 25% discount on `250_000` minor units gives `187_500` before step rounding. With a zero price floor, the final price is `190_000` with a step of `10_000` and `200_000` with a step of `100_000`.
 
 When the selected discount is zero, the calculator returns the original price with both adjustment flags set to `false`.
 

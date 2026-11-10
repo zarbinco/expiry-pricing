@@ -106,8 +106,8 @@ final class ExpiryPricingCalculator
         }
 
         $minimumPriceRatioBps = $this->validateBps($minimumPriceRatioBps, 'minimumPriceRatioBps');
-        if (!in_array($roundingStep, [1, 100, 1000], true)) {
-            throw new InvalidArgumentException('roundingStep must be the integer 1, 100, or 1000.');
+        if (!is_int($roundingStep) || $roundingStep <= 0) {
+            throw new InvalidArgumentException('roundingStep must be a positive integer.');
         }
 
         $life = $this->remainingShelfLife($date, $dateType, $shelfLife, $unit, $calendar, $asOfDate);
@@ -120,6 +120,7 @@ final class ExpiryPricingCalculator
         if ($discountBps > 0) {
             $discountedNumerator = $originalPrice * (self::BPS_PER_WHOLE - $discountBps);
             $minorPrice = $this->halfUpDivide($discountedNumerator, self::BPS_PER_WHOLE);
+            // HALF_UP adds at most the remainder, so the rounded multiple is at most twice $minorPrice.
             $stepPrice = $this->halfUpDivide($minorPrice, $roundingStep) * $roundingStep;
             $floorPrice = $this->ceilBps($originalPrice, $minimumPriceRatioBps);
 

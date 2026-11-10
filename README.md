@@ -107,6 +107,10 @@ $quote['finalPrice'];            // 6504
 $quote['priceFloorApplied'];     // true
 ```
 
+`roundingStep` accepts any positive PHP integer in the same monetary unit as the prices. The calculator rounds to the nearest multiple using `HALF_UP`, then applies the price floor and caps the result at the original price. Either boundary can produce a final price between step multiples. The calling application handles any currency conversion.
+
+For example, a 25% discount on `250_000` minor units gives `187_500` before step rounding. With a zero price floor, a step of `10_000` gives `190_000` and a step of `100_000` gives `200_000`.
+
 On and after the expiry date, the quote reports expiry and returns the original price.
 
 ## Discount timelines
