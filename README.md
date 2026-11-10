@@ -1,6 +1,6 @@
 # Expiry Pricing
 
-`zarbinco/expiry-pricing` is a Composer library for shelf-life and expiry-based pricing in Laravel applications. Phase 1 sets up the package, dependency requirements, and tests. The calculations are planned for a later phase.
+`zarbinco/expiry-pricing` is a Composer library for shelf-life calculations in Laravel applications. Phase 2 calculates expiry dates, shelf-life start dates, and remaining shelf life in the Jalali and Gregorian calendars. Discounts and pricing are planned for Phase 3.
 
 ## Requirements
 
@@ -17,14 +17,47 @@ composer config repositories.expiry-pricing vcs https://github.com/zarbinco/expi
 composer require "zarbinco/expiry-pricing:dev-main"
 ```
 
-## Planned features
+## Usage
 
-- Jalali and Gregorian date calculations with an explicit calendar and shelf life in days or calendar months
-- Expiry dates from manufacturing dates and calculated shelf-life start dates from expiry dates
-- Remaining days, remaining percentage, and expired status as of a caller-supplied date
-- Percentage-based discounts, minimum price ratios, and upcoming discount transitions
+Use `ExpiryPricingCalculator` directly. Choose `jalali` or `gregorian` and specify the shelf life in `days` or `months`. Dates use `YYYY-MM-DD` in the selected calendar.
 
-See [the calculation contract](docs/DECISIONS.md) for the proposed API and open decisions.
+```php
+use Zarbinco\ExpiryPricing\ExpiryPricingCalculator;
+
+$calculator = new ExpiryPricingCalculator();
+
+$expiry = $calculator->expiryDate(
+    manufacturingDate: '1405-01-01',
+    shelfLife: 7,
+    unit: 'months',
+    calendar: 'jalali',
+); // '1405-08-01'
+
+$start = $calculator->shelfLifeStartDate(
+    expiryDate: $expiry,
+    shelfLife: 7,
+    unit: 'months',
+    calendar: 'jalali',
+); // '1405-01-01'
+
+$result = $calculator->remainingShelfLife(
+    date: '1405-01-01',
+    dateType: 'manufacturing',
+    shelfLife: 7,
+    unit: 'months',
+    calendar: 'jalali',
+    asOfDate: '1405-07-01',
+);
+
+$result['totalDays'];           // 216
+$result['remainingDays'];       // 30
+$result['remainingPercentage']; // About 13.89
+$result['expired'];             // false
+```
+
+For an expiry-based evaluation, pass the expiry date as `date` and set `dateType` to `expiry`. The result has the same fields and sets `startDateCalculated` to `true`. Month arithmetic clamps the day to the last valid day of the destination month, so calculating a start date can give a different date from the original manufacturing date.
+
+See [the calculation contract](docs/DECISIONS.md) for the full result structure, date ranges, and planned Phase 3 features.
 
 ## Development
 
@@ -36,4 +69,4 @@ composer validate --strict
 composer test
 ```
 
-PHPUnit checks Composer's namespace registration and dependency autoloading. GitHub Actions runs the same checks on PHP 8.3.
+PHPUnit checks Composer autoloading and covers calendar arithmetic, remaining shelf life, and input validation. GitHub Actions runs the same checks on PHP 8.3.
