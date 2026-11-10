@@ -1,6 +1,6 @@
 # Expiry Pricing
 
-`zarbinco/expiry-pricing` is a Composer library for shelf-life and expiry-based pricing in Laravel applications. It calculates expiry dates, shelf-life start dates, remaining shelf life, and price quotes in the Jalali and Gregorian calendars.
+`zarbinco/expiry-pricing` is a Composer library for shelf-life and expiry-based pricing in Laravel applications. It calculates expiry dates, shelf-life start dates, remaining shelf life, price quotes, and future discount transitions in the Jalali and Gregorian calendars.
 
 ## Requirements
 
@@ -107,7 +107,33 @@ $quote['finalPrice'];            // 6504
 $quote['priceFloorApplied'];     // true
 ```
 
-On and after the expiry date, the quote reports expiry and returns the original price. Future discount timelines are reserved for Phase 4. See [the calculation contract](docs/DECISIONS.md) for the full result structure, input limits, and rounding rules.
+On and after the expiry date, the quote reports expiry and returns the original price.
+
+## Discount timelines
+
+`discountTimeline()` takes the same arguments as `price()` and works from either a manufacturing date or an expiry date in either calendar. Reuse the rules above to see when the selected discount changes for a seven-day Jalali shelf life.
+
+```php
+$timeline = $calculator->discountTimeline(
+    date: '1405-01-01',
+    dateType: 'manufacturing',
+    shelfLife: 7,
+    unit: 'days',
+    calendar: 'jalali',
+    asOfDate: '1405-01-01',
+    originalPrice: 100_000,
+    rules: $rules,
+    minimumPriceRatioBps: 0,
+    roundingStep: 1,
+);
+
+$timeline['currentQuote']['discountBps']; // 0
+$timeline['expiryDate'];                  // '1405-01-08'
+array_column($timeline['transitions'], 'discountBps', 'effectiveDate');
+// ['1405-01-05' => 2000, '1405-01-07' => 4000]
+```
+
+The timeline lists changes in the selected discount strictly after `asOfDate` and before expiry. A floor or rounding can keep the final price the same across a transition. See [the calculation contract](docs/DECISIONS.md) for result fields, validation, and rounding rules.
 
 ## Development
 
@@ -119,4 +145,4 @@ composer validate --strict
 composer test
 ```
 
-PHPUnit checks Composer autoloading and covers calendar arithmetic, remaining shelf life, pricing, and input validation. GitHub Actions runs the same checks on PHP 8.3.
+PHPUnit checks Composer autoloading and covers calendar arithmetic, remaining shelf life, pricing, discount timelines, and input validation. GitHub Actions runs the same checks on PHP 8.3.

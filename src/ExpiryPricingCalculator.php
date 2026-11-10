@@ -142,6 +142,76 @@ final class ExpiryPricingCalculator
         ];
     }
 
+    /**
+     * @param int $shelfLife
+     * @param int $originalPrice Price in minor units.
+     * @param array<array{remainingThresholdBps: int, discountBps: int}> $rules
+     * @param int $minimumPriceRatioBps
+     * @param int $roundingStep
+     * @return array{currentQuote: array, expiryDate: string, transitions: list<array{
+     *     effectiveDate: string, remainingDays: int, discountBps: int, finalPrice: int,
+     *     matchedRule: array{remainingThresholdBps: int, discountBps: int}|null}>}
+     */
+    public function discountTimeline(
+        string $date,
+        string $dateType,
+        mixed $shelfLife,
+        string $unit,
+        string $calendar,
+        string $asOfDate,
+        mixed $originalPrice,
+        mixed $rules,
+        mixed $minimumPriceRatioBps,
+        mixed $roundingStep,
+    ): array {
+        $currentQuote = $this->price(
+            $date, $dateType, $shelfLife, $unit, $calendar, $asOfDate,
+            $originalPrice, $rules, $minimumPriceRatioBps, $roundingStep,
+        );
+        $life = $currentQuote['shelfLife'];
+        $expiryDate = $life['expiryDate'];
+        $cutoffs = [];
+
+        foreach ($rules as $rule) {
+            $cutoff = $this->ceilBps($life['totalDays'], $rule['remainingThresholdBps']);
+            // Zero is expiry. A cutoff already reached cannot change the current quote.
+            if ($cutoff > 0 && $cutoff < $life['remainingDays']) {
+                $cutoffs[$cutoff] = true;
+            }
+        }
+
+        krsort($cutoffs, SORT_NUMERIC);
+        $transitions = [];
+        $lastDiscountBps = $currentQuote['discountBps'];
+
+        foreach (array_keys($cutoffs) as $cutoff) {
+            $effectiveDate = $this->shelfLifeStartDate($expiryDate, $cutoff, 'days', $calendar);
+            $quote = $this->price(
+                $date, $dateType, $shelfLife, $unit, $calendar, $effectiveDate,
+                $originalPrice, $rules, $minimumPriceRatioBps, $roundingStep,
+            );
+
+            if ($quote['discountBps'] === $lastDiscountBps) {
+                continue;
+            }
+
+            $lastDiscountBps = $quote['discountBps'];
+            $transitions[] = [
+                'effectiveDate' => $effectiveDate,
+                'remainingDays' => $quote['shelfLife']['remainingDays'],
+                'discountBps' => $lastDiscountBps,
+                'finalPrice' => $quote['finalPrice'],
+                'matchedRule' => $quote['matchedRule'],
+            ];
+        }
+
+        return [
+            'currentQuote' => $currentQuote,
+            'expiryDate' => $expiryDate,
+            'transitions' => $transitions,
+        ];
+    }
+
     /** @return array{remainingThresholdBps: int, discountBps: int}|null */
     private function selectDiscountRule(array $rules, int $totalDays, int $remainingDays, bool $expired): ?array
     {

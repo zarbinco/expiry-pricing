@@ -1,6 +1,6 @@
 # Calculation decisions
 
-The package implements date and shelf-life calculations and expiry-based pricing. Future discount timelines are reserved for Phase 4.
+The package implements date and shelf-life calculations, expiry-based pricing, and discount timelines.
 
 ## Inputs and validation
 
@@ -29,6 +29,7 @@ Use `Zarbinco\ExpiryPricing\ExpiryPricingCalculator` directly in PHP or in a Lar
 | `shelfLifeStartDate()` | `expiryDate`, `shelfLife`, `unit`, `calendar` | Calculated shelf-life start date as a string |
 | `remainingShelfLife()` | `date`, `dateType`, `shelfLife`, `unit`, `calendar`, `asOfDate` | Associative array with the fields below |
 | `price()` | `date`, `dateType`, `shelfLife`, `unit`, `calendar`, `asOfDate`, `originalPrice`, `rules`, `minimumPriceRatioBps`, `roundingStep` | Pricing quote with the shelf-life result |
+| `discountTimeline()` | Same required parameters as `price()` | Current quote, expiry date, and future discount transitions |
 
 Set `dateType` to `manufacturing` when supplying a manufacturing date or `expiry` when supplying an expiry date.
 
@@ -77,17 +78,37 @@ When the selected discount is zero, the calculator returns the original price wi
 | --- | --- | --- |
 | `originalPrice` | `int` | Input price in minor units |
 | `finalPrice` | `int` | Final price in minor units after rounding and boundaries |
-| `discountBps` | `int` | Selected rule's discount in basis points, or zero |
+| `discountBps` | `int` | Nominal discount from the selected rule in basis points, or zero |
 | `effectiveDiscountBps` | `int` | Actual price reduction in basis points after adjustments |
 | `matchedRule` | `array` or `null` | Selected rule with `remainingThresholdBps` and `discountBps`, or `null` |
 | `priceFloorApplied` | `bool` | Whether the minimum floor raised the rounded price |
 | `roundingApplied` | `bool` | Whether minor-unit rounding or step rounding changed the amount before enforcing boundaries |
 | `shelfLife` | `array` | Result from `remainingShelfLife()` for the supplied dates |
 
+## Discount timeline
+
+`discountTimeline()` uses the same validation and pricing rules as `price()`. It calculates `currentQuote` with `price()` at the supplied `asOfDate` and uses the quote's calculated shelf-life dates and total days.
+
+For each rule, the candidate date is `expiryDate - CEIL(totalDays × remainingThresholdBps / 10000)` calendar days. The calculator evaluates each distinct candidate strictly after `asOfDate` and before expiry using `price()`, in chronological order. It records a transition when the nominal `discountBps` changes, even if the final price stays the same. Rules that qualify together yield one quote for the winning discount.
+
+The current quote already accounts for discounts that apply on the reference date, including a cutoff at the full shelf life when evaluated on or before the start date. Expiry appears separately, with `currentQuote['shelfLife']['expired']` describing the status on `asOfDate`. A zero-percent threshold has its candidate on the expiry date, outside the transition window. On or after expiry, or when the selected discount has no future changes, `transitions` is empty.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `currentQuote` | `array` | Full result from `price()` at `asOfDate` |
+| `expiryDate` | `string` | Expiry date in the selected calendar |
+| `transitions` | `list` | Chronological transition entries |
+
+Each transition contains these fields.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `effectiveDate` | `string` | First date of the new nominal discount in the selected calendar |
+| `remainingDays` | `int` | Shelf-life days remaining on that date |
+| `discountBps` | `int` | Nominal discount in basis points |
+| `finalPrice` | `int` | Price in minor units after rounding and boundaries |
+| `matchedRule` | `array` | Selected rule with `remainingThresholdBps` and `discountBps` |
+
 ## Package boundary
 
 The package performs calculations only. The consuming Laravel application owns products, warehouses, database records, inventory reservations, FEFO allocation, checkout workflows, policy publishing, authentication, and business-specific sellability rules. Expired status is available to the application for its own decisions.
-
-## Phase 4
-
-Future discount timelines will identify dates when the selected discount changes. Coincident thresholds will produce a single transition for the winning rule.
